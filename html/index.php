@@ -1,8 +1,7 @@
 <?php
-// db.phpを呼び出す
+
 require_once dirname(__FILE__) . '/Db.php';
 
-// CORS対策
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Headers: *');
 header('Access-Control-Allow-Methods: *');
@@ -34,30 +33,30 @@ if ($substrUri === 'sign_up') {
 } elseif (strpos($substrUri, 'users') === 0) {
     require_once(dirname(__FILE__) . '/controllers/users.php');
     if (strpos($substrUri, 'timeline') !== false) {
-        $userId = substr($substrUri, 6, strlen($substrUri) - 6);
-        timeline($userId);
+        $id = substr($substrUri, 6, strlen($substrUri) - 6);
+        timeline($id);
     } else {
-        $userId = substr($substrUri, 6, strlen($substrUri) - 6);
+        $id = substr($substrUri, 6, strlen($substrUri) - 6);
         $substrUri = substr($substrUri, 0, 5);
         if ($method === 'GET') {
             userList();
         } elseif ($method === 'PUT') {
-            editUser($userId);
+            editUser($id);
         } elseif ($method === 'DELETE') {
-            deleteUser($userId);
+            deleteUser($id);
         }
     }
 } elseif (strpos($substrUri, 'posts') === 0) {
     require_once(dirname(__FILE__) . '/controllers/posts.php');
-    $postId = substr($substrUri, 6, strlen($substrUri) - 6);
+    $id = substr($substrUri, 6, strlen($substrUri) - 6);
     $substrUri = substr($substrUri, 0, 5);
     if ($method === 'GET') {
         postList();
     } elseif ($method === 'POST') {
         submitPost();
     } elseif ($method === 'PUT') {
-        editPost($postId);
+        editPost($id);
     } elseif ($method === 'DELETE') {
-        deletePost($postId);
+        deletePost($id);
     }
 }

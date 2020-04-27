@@ -11,29 +11,49 @@ function postList()
     $keyword = $_GET['query'];
 
     // dbにtokenを探しに行く
-    $selectUserByTokenFromUsersFetchAllResult = Db::selectUserByTokenFromUsersFetchAll($token);
-    $tokenFromUsersTable = $selectUserByTokenFromUsersFetchAllResult[0]['token'];
+    $selectUserByToken = Db::getPdo()->prepare('SELECT token FROM users WHERE token = :token');
+    $selectUserByToken->bindValue(':token', $token, PDO::PARAM_STR);
+    try {
+        $selectUserByToken->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserByTokenFetchAllResult = $selectUserByToken->fetchAll(PDO::FETCH_ASSOC);
+    $selectedToken = $selectUserByTokenFetchAllResult[0]['token'];
 
     // tokenが見つからなかったらエラー吐く
-    if ($tokenFromUsersTable === null) {
-        $errMsg = 'tokenがおかしい';
+    if ($selectedToken === null) {
+        $errMsg = "tokenがおかしい";
         sendResponse($errMsg);
     }
 
     // tokenが見つかったら投稿一覧引っ張る
-    if ($keyword === '') {
-        $selectAllPostFromPostsFetchAllResult = Db::selectAllPostFromPostsWithoutParamsFetchAllForPublic();
+    if ($keyword === "") {
+        $selectPost = Db::getPdo()->prepare('SELECT id, text, user_id, created_at, updated_at FROM posts ORDER BY updated_at DESC');
     } else {
-        $searchKeyword = '%' . $keyword . '%';
-        $selectAllPostFromPostsFetchAllResult = Db::selectAllPostFromPostsWithParamsFetchAllForPublic($searchKeyword);
+        $selectPost = Db::getPdo()->prepare('SELECT id, text, user_id, created_at, updated_at FROM posts WHERE text LIKE :searchKeyword ORDER BY updated_at DESC');
+        $searchKeyword = "%" . $keyword . "%";
+        $selectPost->bindValue(':searchKeyword', $searchKeyword, PDO::PARAM_STR);
     }
+    try {
+        $selectPost->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectPostFetchAllResult = $selectPost->fetchAll(PDO::FETCH_ASSOC);
 
     // usersテーブル全体を一旦引っ張る
-    $selectAllUserFromUsersFetchAllResult = Db::selectAllUserFromUsersFetchAll();
+    $selectUser = Db::getPdo()->prepare('SELECT * FROM users');
+    try {
+        $selectUser->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserFetchAllResult = $selectUser->fetchAll(PDO::FETCH_ASSOC);
 
     // usersテーブルのidを検索する
-    foreach ($selectAllPostFromPostsFetchAllResult as &$post) {
-        foreach ($selectAllUserFromUsersFetchAllResult as $user) {
+    foreach ($selectPostFetchAllResult as &$post) {
+        foreach ($selectUserFetchAllResult as $user) {
             if ($user['id'] === $post['user_id']) {
                 unset($post['user_id'], $user['email'], $user['password'], $user['token']);
                 $post['user'] = $user;
@@ -43,10 +63,10 @@ function postList()
     }
 
     // $page, $limitがブランクだった場合に値を代入
-    if ($page === '') {
+    if ($page === "") {
         $page = 1;
     }
-    if ($limit === '') {
+    if ($limit === "") {
         $limit = 25;
     }
 
@@ -56,15 +76,11 @@ function postList()
 
     // 結果の配列を受け取る変数を作って，そいつを返す
     $returnResult = [];
-    for ($i = $startPoint; $i <= $endPoint && $i < count($selectAllPostFromPostsFetchAllResult); $i++) {
-        $returnResult[] = $selectAllPostFromPostsFetchAllResult[$i];
+    for ($i = $startPoint; $i <= $endPoint && $i < count($selectPostFetchAllResult); $i++) {
+        $returnResult[] = $selectPostFetchAllResult[$i];
     }
     sendResponse($returnResult);
 }
-
-
-
-
 
 // ---------- 投稿作成機能 ----------
 function submitPost()
@@ -73,94 +89,150 @@ function submitPost()
     $header = getallheaders();
     $bearerToken = $header['Authorization'];
     $token = substr($bearerToken, 7, strlen($bearerToken) - 7);
-    $json = file_get_contents('php://input');
+    $json = file_get_contents("php://input");
     $params = json_decode($json, true)['post_params'];
     $text = $params['text'];
 
     // usersテーブルからtokenに紐づくuserのidを拾ってくる
-    $selectUserByTokenFromUsersFetchAllResult = Db::selectUserByTokenFromUsersFetchAll($token);
-    $userIdFromUsersTable = $selectUserByTokenFromUsersFetchAllResult[0]['id'];
-    $tokenFromUsersTable = $selectUserByTokenFromUsersFetchAllResult[0]['token'];
+    $selectUserByToken = Db::getPdo()->prepare('SELECT id, token FROM users WHERE token = :token');
+    $selectUserByToken->bindValue(':token', $token, PDO::PARAM_STR);
+    try {
+        $selectUserByToken->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserByTokenFetchAllResult = $selectUserByToken->fetchAll(PDO::FETCH_ASSOC);
+    $selectedId = $selectUserByTokenFetchAllResult[0]['id'];
+    $selectedToken = $selectUserByTokenFetchAllResult[0]['token'];
 
     // tokenが見つからなかったらエラー吐く
-    if ($tokenFromUsersTable === null) {
-        $errMsg = 'tokenがおかしい';
+    if ($selectedToken === null) {
+        $errMsg = "tokenがおかしい";
         sendResponse($errMsg);
     }
 
     // postsテーブルにinsertする
-    $insertedPostId = Db::insertPostIntoPostsAndReturnInsertedPostId($text, $userIdFromUsersTable);
+    $insertPost = Db::getPdo()->prepare('INSERT INTO posts SET text = :text, user_id = :userId, created_at = NOW()');
+    $insertPost->bindValue(':text', $text, PDO::PARAM_STR);
+    $insertPost->bindValue(':userId', $selectedId, PDO::PARAM_INT);
+    try {
+        $insertPost->execute();
+        $insertedId = Db::getPdo()->lastInsertId();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
 
     // insertしたカラムをselectする
-    $selectPostByInsertedIdFromPostsFetchAllResult = Db::selectPostByPostIdFromPostsFetchAll($insertedPostId);
-    $insertedUserId = $selectPostByInsertedIdFromPostsFetchAllResult[0]['user_id'];
+    $selectPostByInsertedId = Db::getPdo()->prepare('SELECT * FROM posts WHERE id = :id');
+    $selectPostByInsertedId->bindValue(':id', $insertedId, PDO::PARAM_INT);
+    try {
+        $selectPostByInsertedId->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectPostByInsertedIdFetchAllResult = $selectPostByInsertedId->fetchAll(PDO::FETCH_ASSOC);
+    $insertedUserId = $selectPostByInsertedIdFetchAllResult[0]['user_id'];
 
     // insertしたuserをselectする
-    $selectUserByInsertedUserIdFetchAllResult = Db::selectUserByUserIdFromUsersFetchAllForPublic($insertedUserId);
+    $selectUserByInsertedUserId = Db::getPdo()->prepare('SELECT id, name, bio, created_at, updated_at FROM users WHERE id = :id');
+    $selectUserByInsertedUserId->bindValue(':id', $insertedUserId, PDO::PARAM_INT);
+    try {
+        $selectUserByInsertedUserId->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserByInsertedUserIdFetchAllResult = $selectUserByInsertedUserId->fetchAll(PDO::FETCH_ASSOC);
 
     // レスポンスを返す
-    $selectPostByInsertedIdFromPostsFetchAllResult[0]['user'] = &$selectUserByInsertedUserIdFetchAllResult[0];
-    unset($selectPostByInsertedIdFromPostsFetchAllResult[0]['user_id']);
-    sendResponse($selectPostByInsertedIdFromPostsFetchAllResult[0]);
+    $selectPostByInsertedIdFetchAllResult[0]['user'] =& $selectUserByInsertedUserIdFetchAllResult[0];
+    unset($selectPostByInsertedIdFetchAllResult[0]['user_id']);
+    sendResponse($selectPostByInsertedIdFetchAllResult[0]);
 }
 
-
-
-
-
 // ---------- 投稿編集機能 ----------
-function editPost($postId)
+function editPost($id)
 {
     // jsonを取得
     $header = getallheaders();
     $bearerToken = $header['Authorization'];
     $token = substr($bearerToken, 7, strlen($bearerToken) - 7);
-    $json = file_get_contents('php://input');
+    $json = file_get_contents("php://input");
     $params = json_decode($json, true)['post_params'];
     $text = $params['text'];
 
     // usersテーブルからtokenに紐づくuserのidを拾ってくる
-    $selectUserByTokenFromUsersFetchAllResult = Db::selectUserByTokenFromUsersFetchAll($token);
-    $userIdFromUsersTable = $selectUserByTokenFromUsersFetchAllResult[0]['id'];
-    $tokenFromUsersTable = $selectUserByTokenFromUsersFetchAllResult[0]['token'];
+    $selectUserByToken = Db::getPdo()->prepare('SELECT id, token FROM users WHERE token = :token');
+    $selectUserByToken->bindValue(':token', $token, PDO::PARAM_STR);
+    try {
+        $selectUserByToken->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserByTokenFetchAllResult = $selectUserByToken->fetchAll(PDO::FETCH_ASSOC);
+    $selectedId = $selectUserByTokenFetchAllResult[0]['id'];
+    $selectedToken = $selectUserByTokenFetchAllResult[0]['token'];
 
     // tokenが見つからなかったらエラー吐く
-    if ($tokenFromUsersTable === null) {
-        $errMsg = 'tokenがおかしい';
+    if ($selectedToken === null) {
+        $errMsg = "tokenがおかしい";
         sendResponse($errMsg);
     }
 
     // postsテーブルから編集する投稿のuser_idを拾う
-    $selectPostByPostIdFromPostsFetchAllResult = Db::selectPostByPostIdFromPostsFetchAll($postId);
-    $userIdFromPostsTable = $selectPostByPostIdFromPostsFetchAllResult[0]['user_id'];
+    $selectUserIdById = Db::getPdo()->prepare('SELECT user_id FROM posts WHERE id = :id');
+    $selectUserIdById->bindValue(':id', $id, PDO::PARAM_INT);
+    try {
+        $selectUserIdById->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserIdByIdFetchAllResult = $selectUserIdById->fetchAll(PDO::FETCH_ASSOC);
+    $selectedUserId = $selectUserIdByIdFetchAllResult[0]['user_id'];
 
     // ログイン中のidと編集しようとしている投稿のuser_idを突き合わせ
-    if ($userIdFromUsersTable !== $userIdFromPostsTable) {
+    if ($selectedId !== $selectedUserId) {
         $errorMessage = '自分のPostじゃないよ！';
         sendResponse($errorMessage);
     }
 
     // postsテーブルをupdateする
-    Db::updatePostSetPosts($text, $postId);
+    $updatePost = Db::getPdo()->prepare('UPDATE posts SET text = :text WHERE id = :id');
+    $updatePost->bindValue(':text', $text, PDO::PARAM_STR);
+    $updatePost->bindValue(':id', $id, PDO::PARAM_INT);
+    try {
+        $updatePost->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
 
     // updateしたカラムをselectする
-    $selectPostAgainByPostIdFromPostsFetchAllResult = Db::selectPostByPostIdFromPostsFetchAll($postId);
+    $selectPostByInsertedId = Db::getPdo()->prepare('SELECT * FROM posts WHERE id = :id');
+    $selectPostByInsertedId->bindValue(':id', $id, PDO::PARAM_INT);
+    try {
+        $selectPostByInsertedId->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectPostByInsertedIdFetchAllResult = $selectPostByInsertedId->fetchAll(PDO::FETCH_ASSOC);
 
     // updateしたuserをselectする
-    $selectUserBySelectedIdFetchAllResult = Db::selectUserByUserIdFromUsersFetchAllForPublic($userIdFromUsersTable);
+    $selectUserBySelectedId = Db::getPdo()->prepare('SELECT id, name, bio, created_at, updated_at FROM users WHERE id = :id');
+    $selectUserBySelectedId->bindValue(':id', $selectedId, PDO::PARAM_INT);
+    try {
+        $selectUserBySelectedId->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserBySelectedIdFetchAllResult = $selectUserBySelectedId->fetchAll(PDO::FETCH_ASSOC);
 
     // レスポンスを返す
-    $selectPostAgainByPostIdFromPostsFetchAllResult[0]['user'] = &$selectUserBySelectedIdFetchAllResult[0];
-    unset($selectPostAgainByPostIdFromPostsFetchAllResult[0]['user_id']);
-    sendResponse($selectPostAgainByPostIdFromPostsFetchAllResult[0]);
+    $selectPostByInsertedIdFetchAllResult[0]['user'] =& $selectUserBySelectedIdFetchAllResult[0];
+    unset($selectPostByInsertedIdFetchAllResult[0]['user_id']);
+    sendResponse($selectPostByInsertedIdFetchAllResult[0]);
 }
 
-
-
-
-
 // ---------- 投稿削除機能 ----------
-function deletePost($postId)
+function deletePost($id)
 {
     // jsonを取得
     $header = getallheaders();
@@ -168,27 +240,46 @@ function deletePost($postId)
     $token = substr($bearerToken, 7, strlen($bearerToken) - 7);
 
     // dbにtokenを探しに行く
-    $selectUserByTokenFromUsersFetchAllResult = Db::selectUserByTokenFromUsersFetchAll($token);
-    $tokenFromUsersTable = $selectUserByTokenFromUsersFetchAllResult[0]['token'];
-    $userIdFromUsersTable = $selectUserByTokenFromUsersFetchAllResult[0]['id'];
+    $selectUserByToken = Db::getPdo()->prepare('SELECT id, token FROM users WHERE token = :token');
+    $selectUserByToken->bindValue(':token', $token, PDO::PARAM_STR);
+    try {
+        $selectUserByToken->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserByTokenFetchAllResult = $selectUserByToken->fetchAll(PDO::FETCH_ASSOC);
+    $selectedToken = $selectUserByTokenFetchAllResult[0]['token'];
+    $selectedId = $selectUserByTokenFetchAllResult[0]['id'];
 
     // tokenが見つからなかったらエラー吐く
-    if ($tokenFromUsersTable === null) {
-        $errMsg = 'tokenがおかしい';
+    if ($selectedToken === null) {
+        $errMsg = "tokenがおかしい";
         sendResponse($errMsg);
     }
 
-    // postsテーブルから削除する投稿のuser_idを拾う
-    $selectUserIdByIdFetchAllResult = Db::selectPostByPostIdFromPostsFetchAll($postId);
+    // postsテーブルから編集する投稿のuser_idを拾う
+    $selectUserIdById = Db::getPdo()->prepare('SELECT user_id FROM posts WHERE id = :id');
+    $selectUserIdById->bindValue(':id', $id, PDO::PARAM_INT);
+    try {
+        $selectUserIdById->execute();
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
+    $selectUserIdByIdFetchAllResult = $selectUserIdById->fetchAll(PDO::FETCH_ASSOC);
 
     // ログイン中のidと削除しようとしている投稿のuser_idを突き合わせ
-    if ($userIdFromUsersTable !== $selectUserIdByIdFetchAllResult[0]['user_id']) {
+    if ($selectedId !== $selectUserIdByIdFetchAllResult[0]['user_id']) {
         $errorMessage = '自分のPostじゃないよ！';
         sendResponse($errorMessage);
     }
 
-    // postテーブルから削除
-    Db::deletePostFromPosts($postId);
-    $message = '正常にPost削除されました';
-    sendResponse($message);
+    $deletePost = Db::getPdo()->prepare('DELETE FROM posts WHERE id = :id');
+    $deletePost->bindValue(':id', $id, PDO::PARAM_STR);
+    try {
+        $deletePost->execute();
+        $msg = '正常にPost削除されました';
+        sendResponse($msg);
+    } catch (Exception $e) {
+        sendResponse($e);
+    }
 }
